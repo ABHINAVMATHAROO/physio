@@ -5,87 +5,17 @@ import AppointmentForm, {
 } from "../components/AppointmentForm";
 import DatePicker from "../components/DatePicker";
 import SlotPicker from "../components/SlotPicker";
+import { generateSlots, type Slot, type WorkHours } from "../lib/slots";
 
-const MORNING_SLOTS = [
-  "06:00",
-  "06:15",
-  "06:30",
-  "06:45",
-  "07:00",
-  "07:15",
-  "07:30",
-  "07:45",
-  "08:00",
-  "08:15",
-  "08:30",
-  "08:45",
-  "09:00",
-  "09:15",
-  "09:30",
-  "09:45",
-  "10:00",
-  "10:15",
-  "10:30",
-  "10:45",
-  "11:00",
-  "11:15",
-  "11:30",
-  "11:45",
-];
+const SLOT_MINUTES = 15;
 
-const AFTERNOON_SLOTS = [
-  "12:00",
-  "12:15",
-  "12:30",
-  "12:45",
-  "13:00",
-  "13:15",
-  "13:30",
-  "13:45",
-  "14:00",
-  "14:15",
-  "14:30",
-  "14:45",
-  "15:00",
-  "15:15",
-  "15:30",
-  "15:45",
-  "16:00",
-  "16:15",
-  "16:30",
-  "16:45",
-];
+const WORK_HOURS: Record<string, WorkHours> = {
+  Morning: { start: "06:00", end: "12:00" },
+  Afternoon: { start: "12:00", end: "17:00" },
+  Evening: { start: "17:00", end: "22:00" },
+};
 
-const EVENING_SLOTS = [
-  "17:00",
-  "17:15",
-  "17:30",
-  "17:45",
-  "18:00",
-  "18:15",
-  "18:30",
-  "18:45",
-  "19:00",
-  "19:15",
-  "19:30",
-  "19:45",
-  "20:00",
-  "20:15",
-  "20:30",
-  "20:45",
-  "21:00",
-  "21:15",
-  "21:30",
-  "21:45",
-];
-
-const SLOT_SECTIONS = [
-  { label: "Morning", slots: MORNING_SLOTS },
-  { label: "Afternoon", slots: AFTERNOON_SLOTS },
-  { label: "Evening", slots: EVENING_SLOTS },
-];
-
-const BASE_UNAVAILABLE = new Set(["08:30", "13:45", "18:15"]);
+const BASE_UNAVAILABLE_TIMES = ["08:30", "13:45", "18:15"];
 
 const formatDate = (date: Date) => {
   const year = date.getFullYear();
@@ -100,6 +30,8 @@ const addDays = (date: Date, days: number) => {
   return next;
 };
 
+const createSlotKey = (dateISO: string, time: string) => `${dateISO}_${time}`;
+
 const fetchUnavailableSlots = (date: string) => {
   const today = new Date();
   const tomorrow = formatDate(addDays(today, 1));
@@ -111,13 +43,19 @@ const fetchUnavailableSlots = (date: string) => {
   };
 
   const fromOverrides = dateOverrides[date] ?? [];
-  return new Set([...BASE_UNAVAILABLE, ...fromOverrides]);
+  const unavailableTimes = [...BASE_UNAVAILABLE_TIMES, ...fromOverrides];
+  return new Set(unavailableTimes.map((time) => createSlotKey(date, time)));
 };
 
 type ConfirmationDetails = {
   date: string;
-  slot: string;
+  slot: Slot;
   values: AppointmentFormValues;
+};
+
+type SlotSection = {
+  label: string;
+  slots: Slot[];
 };
 
 const Book = () => {
@@ -126,7 +64,7 @@ const Book = () => {
   const maxDate = formatDate(addDays(today, 30));
 
   const [selectedDate, setSelectedDate] = useState<string>(minDate);
-  const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
+  const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
   const [formValues, setFormValues] = useState<AppointmentFormValues>({
     patientName: "",
     phone: "",
@@ -136,6 +74,19 @@ const Book = () => {
   const [dateError, setDateError] = useState<string | undefined>();
   const [slotError, setSlotError] = useState<string | undefined>();
   const [confirmation, setConfirmation] = useState<ConfirmationDetails | null>(null);
+
+  const slotSections = useMemo<SlotSection[]>(
+    () =>
+      Object.entries(WORK_HOURS).map(([label, workHours]) => ({
+        label,
+        slots: generateSlots({
+          dateISO: selectedDate,
+          workHours,
+          slotMinutes: SLOT_MINUTES,
+        }),
+      })),
+    [selectedDate]
+  );
 
   const unavailableSlots = useMemo(() => fetchUnavailableSlots(selectedDate), [selectedDate]);
 
@@ -173,11 +124,7 @@ const Book = () => {
 
     setFormErrors(nextErrors);
 
-    if (
-      Object.keys(nextErrors).length > 0 ||
-      !selectedDate ||
-      !selectedSlot
-    ) {
+    if (Object.keys(nextErrors).length > 0 || !selectedDate || !selectedSlot) {
       return;
     }
 
@@ -207,8 +154,8 @@ const Book = () => {
             error={dateError}
           />
           <SlotPicker
-            sections={SLOT_SECTIONS}
-            selectedSlot={selectedSlot}
+            sections={slotSections}
+            selectedSlotKey={selectedSlot?.key ?? null}
             disabledSlots={unavailableSlots}
             onSelect={(slot) => {
               setSelectedSlot(slot);
@@ -243,7 +190,8 @@ const Book = () => {
                   <span className="font-medium">Date:</span> {confirmation.date}
                 </p>
                 <p>
-                  <span className="font-medium">Time:</span> {confirmation.slot}
+                  <span className="font-medium">Time:</span> {confirmation.slot.startTime} -{" "}
+                  {confirmation.slot.endTime}
                 </p>
                 <p>
                   <span className="font-medium">Patient:</span> {confirmation.values.patientName}

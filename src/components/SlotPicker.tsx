@@ -1,19 +1,21 @@
+import type { Slot } from "../lib/slots";
+
 type SlotSection = {
   label: string;
-  slots: string[];
+  slots: Slot[];
 };
 
 type SlotPickerProps = {
   sections: SlotSection[];
-  selectedSlot: string | null;
+  selectedSlotKey: string | null;
   disabledSlots: Set<string>;
-  onSelect: (slot: string) => void;
+  onSelect: (slot: Slot) => void;
   error?: string;
 };
 
 const SlotPicker = ({
   sections,
-  selectedSlot,
+  selectedSlotKey,
   disabledSlots,
   onSelect,
   error,
@@ -32,11 +34,11 @@ const SlotPicker = ({
             </p>
             <div className="flex flex-wrap gap-2">
               {section.slots.map((slot) => {
-                const isDisabled = disabledSlots.has(slot);
-                const isSelected = selectedSlot === slot;
+                const isDisabled = disabledSlots.has(slot.key);
+                const isSelected = selectedSlotKey === slot.key;
                 return (
                   <button
-                    key={slot}
+                    key={slot.key}
                     type="button"
                     onClick={() => onSelect(slot)}
                     disabled={isDisabled}
@@ -50,7 +52,7 @@ const SlotPicker = ({
                         : "",
                     ].join(" ")}
                   >
-                    {slot}
+                    {slot.startTime}
                   </button>
                 );
               })}
