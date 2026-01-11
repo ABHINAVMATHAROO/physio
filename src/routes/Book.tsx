@@ -1,21 +1,19 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import AppointmentForm, {
   type AppointmentFormErrors,
   type AppointmentFormValues,
 } from "../components/AppointmentForm";
 import DatePicker from "../components/DatePicker";
 import SlotPicker from "../components/SlotPicker";
-import { generateSlots, type Slot, type WorkHours } from "../lib/slots";
+import {
+  createAppointment,
+  fetchAvailability,
+  type AvailabilityResponse,
+  type AvailabilitySlot,
+  type ApiError,
+} from "../lib/api";
 
 const SLOT_MINUTES = 15;
-
-const WORK_HOURS: Record<string, WorkHours> = {
-  Morning: { start: "06:00", end: "12:00" },
-  Afternoon: { start: "12:00", end: "17:00" },
-  Evening: { start: "17:00", end: "22:00" },
-};
-
-const BASE_UNAVAILABLE_TIMES = ["08:30", "13:45", "18:15"];
 
 const formatDate = (date: Date) => {
   const year = date.getFullYear();
@@ -30,32 +28,53 @@ const addDays = (date: Date, days: number) => {
   return next;
 };
 
-const createSlotKey = (dateISO: string, time: string) => `${dateISO}_${time}`;
-
-const fetchUnavailableSlots = (date: string) => {
-  const today = new Date();
-  const tomorrow = formatDate(addDays(today, 1));
-  const nextWeek = formatDate(addDays(today, 7));
-
-  const dateOverrides: Record<string, string[]> = {
-    [tomorrow]: ["09:00", "09:15", "15:30"],
-    [nextWeek]: ["11:00", "11:15", "19:00"],
-  };
-
-  const fromOverrides = dateOverrides[date] ?? [];
-  const unavailableTimes = [...BASE_UNAVAILABLE_TIMES, ...fromOverrides];
-  return new Set(unavailableTimes.map((time) => createSlotKey(date, time)));
+const parseTimeToMinutes = (value: string) => {
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours * 60 + minutes;
 };
 
 type ConfirmationDetails = {
   date: string;
-  slot: Slot;
+  slot: AvailabilitySlot;
   values: AppointmentFormValues;
+  appointmentId: string;
 };
 
 type SlotSection = {
   label: string;
-  slots: Slot[];
+  slots: AvailabilitySlot[];
+};
+
+const getSlotSectionLabel = (slot: AvailabilitySlot) => {
+  const hour = parseTimeToMinutes(slot.startTime) / 60;
+  if (hour >= 6 && hour < 12) {
+    return "Morning";
+  }
+  if (hour >= 12 && hour < 17) {
+    return "Afternoon";
+  }
+  return "Evening";
+};
+
+const buildSections = (slots: AvailabilitySlot[]) => {
+  const sorted = [...slots].sort((a, b) =>
+    parseTimeToMinutes(a.startTime) - parseTimeToMinutes(b.startTime)
+  );
+
+  const sections: Record<string, AvailabilitySlot[]> = {
+    Morning: [],
+    Afternoon: [],
+    Evening: [],
+  };
+
+  sorted.forEach((slot) => {
+    sections[getSlotSectionLabel(slot)].push(slot);
+  });
+
+  return Object.entries(sections).map(([label, sectionSlots]) => ({
+    label,
+    slots: sectionSlots,
+  }));
 };
 
 const Book = () => {
@@ -64,7 +83,7 @@ const Book = () => {
   const maxDate = formatDate(addDays(today, 30));
 
   const [selectedDate, setSelectedDate] = useState<string>(minDate);
-  const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
+  const [selectedSlot, setSelectedSlot] = useState<AvailabilitySlot | null>(null);
   const [formValues, setFormValues] = useState<AppointmentFormValues>({
     patientName: "",
     phone: "",
@@ -74,21 +93,38 @@ const Book = () => {
   const [dateError, setDateError] = useState<string | undefined>();
   const [slotError, setSlotError] = useState<string | undefined>();
   const [confirmation, setConfirmation] = useState<ConfirmationDetails | null>(null);
+  const [availability, setAvailability] = useState<AvailabilityResponse | null>(null);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+  const [isLoadingAvailability, setIsLoadingAvailability] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const loadAvailability = useCallback(async () => {
+    setIsLoadingAvailability(true);
+    setAvailabilityError(null);
+
+    try {
+      const response = await fetchAvailability(selectedDate);
+      setAvailability(response);
+      setSelectedSlot((current) =>
+        response.slots.find((slot) => slot.key === current?.key) ?? null
+      );
+    } catch (error) {
+      const apiError = error as ApiError;
+      setAvailabilityError(apiError.message ?? "Unable to load availability.");
+    } finally {
+      setIsLoadingAvailability(false);
+    }
+  }, [selectedDate]);
+
+  useEffect(() => {
+    void loadAvailability();
+  }, [loadAvailability]);
 
   const slotSections = useMemo<SlotSection[]>(
-    () =>
-      Object.entries(WORK_HOURS).map(([label, workHours]) => ({
-        label,
-        slots: generateSlots({
-          dateISO: selectedDate,
-          workHours,
-          slotMinutes: SLOT_MINUTES,
-        }),
-      })),
-    [selectedDate]
+    () => buildSections(availability?.slots ?? []),
+    [availability]
   );
-
-  const unavailableSlots = useMemo(() => fetchUnavailableSlots(selectedDate), [selectedDate]);
 
   const handleDateChange = (value: string) => {
     setSelectedDate(value);
@@ -96,6 +132,7 @@ const Book = () => {
     setDateError(undefined);
     setSlotError(undefined);
     setConfirmation(null);
+    setSubmitError(null);
   };
 
   const handleFormChange = (field: keyof AppointmentFormValues, value: string) => {
@@ -103,7 +140,7 @@ const Book = () => {
     setFormErrors((prev) => ({ ...prev, [field]: undefined }));
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const nextErrors: AppointmentFormErrors = {};
 
     if (!formValues.patientName.trim()) {
@@ -128,11 +165,35 @@ const Book = () => {
       return;
     }
 
-    setConfirmation({
-      date: selectedDate,
-      slot: selectedSlot,
-      values: formValues,
-    });
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      const response = await createAppointment({
+        dateISO: selectedDate,
+        startTime: selectedSlot.startTime,
+        patientName: formValues.patientName,
+        phone: formValues.phone,
+        reason: formValues.reason || undefined,
+      });
+
+      setConfirmation({
+        date: selectedDate,
+        slot: selectedSlot,
+        values: formValues,
+        appointmentId: response.appointmentId,
+      });
+    } catch (error) {
+      const apiError = error as ApiError;
+      if (apiError.code === "SLOT_TAKEN") {
+        setSubmitError("That slot was just booked. Please pick another time.");
+        await loadAvailability();
+      } else {
+        setSubmitError(apiError.message ?? "Unable to complete booking.");
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -153,14 +214,27 @@ const Book = () => {
             onChange={handleDateChange}
             error={dateError}
           />
+          {availabilityError ? (
+            <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+              {availabilityError}
+            </div>
+          ) : null}
+          {isLoadingAvailability ? (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+              Loading availability...
+            </div>
+          ) : null}
           <SlotPicker
             sections={slotSections}
             selectedSlotKey={selectedSlot?.key ?? null}
-            disabledSlots={unavailableSlots}
             onSelect={(slot) => {
+              if (!slot.available) {
+                return;
+              }
               setSelectedSlot(slot);
               setSlotError(undefined);
               setConfirmation(null);
+              setSubmitError(null);
             }}
             error={slotError}
           />
@@ -171,13 +245,19 @@ const Book = () => {
             <p className="mt-1 text-xs text-slate-500">
               Required fields are marked with an asterisk.
             </p>
-            <div className="mt-4">
+            <div className="mt-4 space-y-3">
               <AppointmentForm
                 values={formValues}
                 errors={formErrors}
                 onChange={handleFormChange}
                 onSubmit={handleSubmit}
               />
+              {submitError ? (
+                <p className="text-xs text-rose-600">{submitError}</p>
+              ) : null}
+              {isSubmitting ? (
+                <p className="text-xs text-slate-500">Submitting booking...</p>
+              ) : null}
             </div>
           </div>
           {confirmation ? (
@@ -186,6 +266,9 @@ const Book = () => {
                 Appointment confirmed
               </p>
               <div className="mt-3 space-y-2 text-sm text-emerald-900">
+                <p>
+                  <span className="font-medium">Appointment ID:</span> {confirmation.appointmentId}
+                </p>
                 <p>
                   <span className="font-medium">Date:</span> {confirmation.date}
                 </p>
@@ -211,6 +294,9 @@ const Book = () => {
               Confirm your details to see the booking summary.
             </div>
           )}
+          <p className="text-xs text-slate-400">
+            Slots are refreshed from the clinic schedule. {SLOT_MINUTES}-minute sessions.
+          </p>
         </div>
       </div>
     </section>

@@ -1,25 +1,22 @@
-import type { Slot } from "../lib/slots";
+type SlotItem = {
+  key: string;
+  startTime: string;
+  available: boolean;
+};
 
 type SlotSection = {
   label: string;
-  slots: Slot[];
+  slots: SlotItem[];
 };
 
 type SlotPickerProps = {
   sections: SlotSection[];
   selectedSlotKey: string | null;
-  disabledSlots: Set<string>;
-  onSelect: (slot: Slot) => void;
+  onSelect: (slot: SlotItem) => void;
   error?: string;
 };
 
-const SlotPicker = ({
-  sections,
-  selectedSlotKey,
-  disabledSlots,
-  onSelect,
-  error,
-}: SlotPickerProps) => {
+const SlotPicker = ({ sections, selectedSlotKey, onSelect, error }: SlotPickerProps) => {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -33,29 +30,33 @@ const SlotPicker = ({
               {section.label}
             </p>
             <div className="flex flex-wrap gap-2">
-              {section.slots.map((slot) => {
-                const isDisabled = disabledSlots.has(slot.key);
-                const isSelected = selectedSlotKey === slot.key;
-                return (
-                  <button
-                    key={slot.key}
-                    type="button"
-                    onClick={() => onSelect(slot)}
-                    disabled={isDisabled}
-                    className={[
-                      "rounded-full px-3 py-1 text-xs font-medium transition",
-                      isSelected
-                        ? "bg-slate-900 text-white"
-                        : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300",
-                      isDisabled
-                        ? "cursor-not-allowed border-slate-100 bg-slate-100 text-slate-400"
-                        : "",
-                    ].join(" ")}
-                  >
-                    {slot.startTime}
-                  </button>
-                );
-              })}
+              {section.slots.length === 0 ? (
+                <p className="text-xs text-slate-400">No slots available.</p>
+              ) : (
+                section.slots.map((slot) => {
+                  const isSelected = selectedSlotKey === slot.key;
+                  const isDisabled = !slot.available;
+                  return (
+                    <button
+                      key={slot.key}
+                      type="button"
+                      onClick={() => onSelect(slot)}
+                      disabled={isDisabled}
+                      className={[
+                        "rounded-full px-3 py-1 text-xs font-medium transition",
+                        isSelected
+                          ? "bg-slate-900 text-white"
+                          : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300",
+                        isDisabled
+                          ? "cursor-not-allowed border-slate-100 bg-slate-100 text-slate-400"
+                          : "",
+                      ].join(" ")}
+                    >
+                      {slot.startTime}
+                    </button>
+                  );
+                })
+              )}
             </div>
           </div>
         ))}
